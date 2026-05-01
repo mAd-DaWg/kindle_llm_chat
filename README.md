@@ -1,0 +1,131 @@
+# Kindle LLM Chat
+
+Native Kindle GTK+ 2.0 chat client in C++ (Meson) for jailbroken devices.
+
+## Features
+
+- ChatGPT-style sidebar for chat threads (create, switch, delete).
+- Persistent chat history (stored as JSON per chat thread).
+- Configurable backend URL/model/token for LM Studio and Ollama-style usage.
+- Real-time streamed responses.
+- Context usage meter shown as percentage.
+- Toggleable on-screen keyboard with XML layouts (kterm-style format).
+- Top-right `X` button for graceful app exit.
+
+## Build (desktop smoke test)
+
+Requirements:
+
+- `meson`
+- `ninja`
+- `gtk+-2.0` development package
+- `glib-2.0` development package
+- `json-glib-1.0` development package
+- `libcurl` development package
+
+Install dependencies
+```sh
+sudo apt install build-essential autoconf automake bison flex gawk libtool libtool-bin libncurses-dev curl file git gperf help2man texinfo unzip wget cmake curl sed libarchive-dev nettle-dev meson gtk2.0 libgtk2.0-dev libcurl4-openssl-dev libjson-glib-dev
+```
+
+TC	Supported Devices	Target:
+kindle       - Kindle 2, DX, DXg, 3
+kindle5      - Kindle 4, Touch, PW1
+kindlepw2    - Kindle PW2 & everything since on FW <5.16.3	kindlepw2
+kindlehf     - Any Kindle on FW >= 5.16.3	kindlehf
+
+
+Build toolchain and sdk:
+```sh
+git clone --recursive --depth=1 https://github.com/koreader/koxtoolchain.git
+git clone --recursive --depth=1 https://github.com/KindleModding/kindle-sdk.git
+
+cd koxtoolchain
+chmod +x ./gen-tc.sh
+./gen-tc.sh kindlehf
+
+cd ../kindle-sdk
+chmod +x ./gen-sdk.sh
+./gen-sdk.sh kindlehf
+```
+
+Take note of the `To cross-compile via Meson, use the meson-crosscompile.txt file at` message from the above command.
+
+Build commands:
+
+```sh
+meson setup builddir
+meson compile -C builddir
+```
+
+Run locally:
+
+```sh
+./builddir/kindle-llm-chat
+```
+
+Crosscompile for kindle using the toolchain, `<meson_crosscompile_path>` is typically `~/x-tools/arm-kindlehf-linux-gnueabihf/meson-crosscompile.txt` for `kindlehf`, but use the output from the sdk build above you were supposed to take note of.
+
+```sh
+meson setup --cross-file <meson_crosscompile_path> builddir_kindlehf
+meson compile -C builddir_kindlehf
+```
+
+
+## Runtime Configuration
+
+Use the in-app **Settings** button to configure:
+
+- Base URL
+- Model
+- API key (optional)
+- Backend mode (`openai_compatible` or `ollama`)
+- Context window size
+
+Configuration is persisted in:
+
+- `/mnt/us/extensions/kindle_llm_chat/data/config.json`
+
+Chats are persisted in:
+
+- `/mnt/us/extensions/kindle_llm_chat/data/index.json`
+- `/mnt/us/extensions/kindle_llm_chat/data/chats/*.json`
+
+## Kindle Packaging (KUAL/MRPI)
+
+1. Build binary using your Kindle toolchain (see crosscompile commands above).
+2. Place resulting binary at:
+   - `builddir/kindle-llm-chat`
+3. Create package artifact:
+
+```sh
+./tools/package_mrpi.sh
+```
+
+This produces:
+
+- `dist/kindle-llm-chat-mrpi.tar.gz`
+
+The archive contains `extensions/kindle_llm_chat/*` for deployment on Kindle USB storage root.
+
+## KUAL Launcher
+
+Launcher script:
+
+- `kindle.pkg/bin/run.sh`
+
+KUAL menu definition:
+
+- `kindle.pkg/menu.json`
+
+Keyboard layouts:
+
+- `kindle.pkg/layouts/keyboard-200dpi.xml`
+- `kindle.pkg/layouts/keyboard-300dpi.xml`
+
+`run.sh` auto-selects layout based on Kindle DPI.
+
+## Notes
+
+- The network API flow is OpenAI-compatible streaming; Ollama mode uses `/api/chat`.
+- If usage metadata is absent from the backend stream, context percentage remains based on available token counters only.

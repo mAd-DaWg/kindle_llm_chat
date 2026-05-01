@@ -1,0 +1,6 @@
+option(
+  'kindle_data_dir',
+  type: 'string',
+  value: '/mnt/us/extensions/kindle_llm_chat',
+  description: 'Default data/config directory on Kindle'
+)

@@ -1,0 +1,10 @@
+{
+  "name": "Kindle LLM Chat",
+  "items": [
+    {
+      "name": "Launch Kindle LLM Chat",
+      "priority": 10,
+      "action": "sh /mnt/us/extensions/kindle_llm_chat/bin/run.sh"
+    }
+  ]
+}
