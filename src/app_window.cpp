@@ -1,4 +1,5 @@
 #include "app_window.h"
+#include "markdown_view.h"
 #include <algorithm>
 #include <cstdlib>
 #include <ctime>
@@ -60,7 +61,7 @@ gboolean AppWindow::idle_append_text(gpointer data) {
   } else if (ev->kind == UiTextEvent::Kind::AssistantDone) {
     if (ev->stream_gen == self->assistant_ui_epoch_ && ev->stream_target_id == self->active_chat_id_ &&
         self->stream_gen_is_active(ev->stream_gen)) {
-      self->end_assistant_stream();
+      self->finish_assistant_markdown(ev->text);
     }
   } else {
     if (ev->role == "error" && !ev->stream_target_id.empty()) {
@@ -148,6 +149,7 @@ void AppWindow::build_ui() {
   gtk_container_add(GTK_CONTAINER(chat_scroll_), chat_text_view_);
   gtk_box_pack_start(GTK_BOX(right), chat_scroll_, TRUE, TRUE, 0);
   chat_buffer_ = gtk_text_view_get_buffer(GTK_TEXT_VIEW(chat_text_view_));
+  markdown_ensure_tags(chat_buffer_);
 
   usage_label_ = gtk_label_new("Context usage: 0.0%");
   gtk_box_pack_start(GTK_BOX(right), usage_label_, FALSE, FALSE, 0);
@@ -208,16 +210,25 @@ void AppWindow::reload_sidebar() {
 }
 
 void AppWindow::append_line(const std::string &role, const std::string &content) {
+  markdown_ensure_tags(chat_buffer_);
   GtkTextIter end;
   gtk_text_buffer_get_end_iter(chat_buffer_, &end);
-  std::string line = role + ": " + content + "\n\n";
-  gtk_text_buffer_insert(chat_buffer_, &end, line.c_str(), -1);
+  const std::string prefix = role + ": ";
+  gtk_text_buffer_insert_with_tags_by_name(chat_buffer_, &end, prefix.c_str(), -1, "md_role", nullptr);
+  if (role == "error") {
+    gtk_text_buffer_insert(chat_buffer_, &end, content.c_str(), -1);
+  } else {
+    markdown_insert(chat_buffer_, &end, content);
+  }
+  gtk_text_buffer_insert(chat_buffer_, &end, "\n\n", -1);
 }
 
 void AppWindow::begin_assistant_stream() {
+  gtk_text_buffer_delete_mark_by_name(chat_buffer_, "assistant_body_start");
   GtkTextIter end;
   gtk_text_buffer_get_end_iter(chat_buffer_, &end);
   gtk_text_buffer_insert(chat_buffer_, &end, "assistant: ", -1);
+  gtk_text_buffer_create_mark(chat_buffer_, "assistant_body_start", &end, TRUE);
 }
 
 void AppWindow::append_assistant_token(const std::string &token) {
@@ -230,6 +241,24 @@ void AppWindow::end_assistant_stream() {
   GtkTextIter end;
   gtk_text_buffer_get_end_iter(chat_buffer_, &end);
   gtk_text_buffer_insert(chat_buffer_, &end, "\n\n", -1);
+}
+
+void AppWindow::finish_assistant_markdown(const std::string &full_text) {
+  GtkTextMark *m = gtk_text_buffer_get_mark(chat_buffer_, "assistant_body_start");
+  if (!m) {
+    return;
+  }
+  GtkTextIter ins;
+  GtkTextIter end;
+  gtk_text_buffer_get_iter_at_mark(chat_buffer_, &ins, m);
+  gtk_text_buffer_get_end_iter(chat_buffer_, &end);
+  gtk_text_buffer_delete(chat_buffer_, &ins, &end);
+  gtk_text_buffer_get_iter_at_mark(chat_buffer_, &ins, m);
+  markdown_insert(chat_buffer_, &ins, full_text);
+  gtk_text_buffer_delete_mark_by_name(chat_buffer_, "assistant_body_start");
+  GtkTextIter tail;
+  gtk_text_buffer_get_end_iter(chat_buffer_, &tail);
+  gtk_text_buffer_insert(chat_buffer_, &tail, "\n\n", -1);
 }
 
 void AppWindow::refresh_usage_label(const ChatUsage &usage) {
@@ -591,6 +620,7 @@ void AppWindow::on_send() {
     UiTextEvent *ev = new UiTextEvent{};
     ev->self = this;
     ev->kind = UiTextEvent::Kind::AssistantDone;
+    ev->text = *assistant_buffer;
     ev->stream_target_id = chat_id;
     ev->stream_gen = stream_gen;
     g_idle_add(&AppWindow::idle_append_text, ev);

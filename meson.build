@@ -1,4 +1,4 @@
-project('kindle_llm_chat', 'cpp',
+project('kindle_llm_chat', ['c', 'cpp'],
   version: '0.1.0',
   default_options: [
     'cpp_std=c++17',
@@ -12,6 +12,19 @@ json_glib_dep = dependency('json-glib-1.0')
 curl_dep = dependency('libcurl')
 
 inc = include_directories('src')
+md4c_inc = include_directories('third_party/md4c/src')
+
+md4c_lib = static_library(
+  'md4c',
+  'third_party/md4c/src/md4c.c',
+  include_directories: md4c_inc,
+  override_options: ['c_std=c99'],
+)
+
+md4c_dep = declare_dependency(
+  link_with: md4c_lib,
+  include_directories: md4c_inc,
+)
 
 sources = files(
   'src/main.cpp',
@@ -21,13 +34,14 @@ sources = files(
   'src/http_client.cpp',
   'src/stream_parser.cpp',
   'src/osk.cpp',
+  'src/markdown_view.cpp',
 )
 
 executable(
   'kindle-llm-chat',
   sources,
   include_directories: inc,
-  dependencies: [gtk_dep, glib_dep, json_glib_dep, curl_dep],
-  cpp_args: '-static-libstdc++', 
+  dependencies: [gtk_dep, glib_dep, json_glib_dep, curl_dep, md4c_dep],
+  cpp_args: '-static-libstdc++',
   link_args: '-static-libstdc++'
 )

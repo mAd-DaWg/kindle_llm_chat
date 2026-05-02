@@ -7,7 +7,7 @@ Native Kindle GTK+ 2.0 chat client in C++ (Meson) for jailbroken devices.
 - ChatGPT-style sidebar for chat threads (create, switch, delete).
 - Persistent chat history (stored as JSON per chat thread).
 - Configurable backend URL/model/token for LM Studio and Ollama-style usage.
-- Real-time streamed responses.
+- Real-time streamed responses (assistant text is rendered as Markdown when a reply finishes).
 - Context usage meter shown as percentage.
 - Toggleable on-screen keyboard with XML layouts (kterm-style format).
 - Top-right `X` button for graceful app exit.
@@ -28,12 +28,27 @@ Install dependencies
 sudo apt install build-essential autoconf automake bison flex gawk libtool libtool-bin libncurses-dev curl file git gperf help2man texinfo unzip wget cmake curl sed libarchive-dev nettle-dev meson gtk2.0 libgtk2.0-dev libcurl4-openssl-dev libjson-glib-dev
 ```
 
-TC	Supported Devices	Target:
-kindle       - Kindle 2, DX, DXg, 3
-kindle5      - Kindle 4, Touch, PW1
-kindlepw2    - Kindle PW2 & everything since on FW <5.16.3	kindlepw2
-kindlehf     - Any Kindle on FW >= 5.16.3	kindlehf
+Clone this repository with submodules (Markdown parsing uses [md4c](https://github.com/mity/md4c) from `third_party/md4c`):
 
+```sh
+git clone --recursive https://github.com/mAd-DaWg/kindle_llm_chat.git
+cd kindle_llm_chat
+```
+
+If you already cloned without submodules:
+
+```sh
+git submodule update --init --recursive
+```
+
+### Kindle cross-compile targets (koxtoolchain)
+
+| TC        | Supported devices                    |
+| --------- | ------------------------------------ |
+| kindle    | Kindle 2, DX, DXg, 3                 |
+| kindle5   | Kindle 4, Touch, PW1                |
+| kindlepw2 | Kindle PW2 and newer on FW < 5.16.3 |
+| kindlehf  | Any Kindle on FW >= 5.16.3          |
 
 Build toolchain and sdk:
 ```sh
@@ -62,6 +77,10 @@ Run locally:
 
 ```sh
 ./builddir/kindle-llm-chat
+```
+Run with debug messages:
+```sh
+gdb -q -batch -ex run -ex bt --args ./builddir/kindle-llm-chat
 ```
 
 Crosscompile for kindle using the toolchain, `<meson_crosscompile_path>` is typically `~/x-tools/arm-kindlehf-linux-gnueabihf/meson-crosscompile.txt` for `kindlehf`, but use the output from the sdk build above you were supposed to take note of.

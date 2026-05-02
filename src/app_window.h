@@ -65,6 +65,8 @@ private:
   void unregister_stream_gen(uint64_t gen);
   bool stream_gen_is_active(uint64_t gen) const;
   void scroll_chat_to_bottom();
+  /** Replace streamed assistant plain text with rendered markdown; appends closing newlines. */
+  void finish_assistant_markdown(const std::string &full_text);
   void refresh_usage_estimate_for_stream(const std::string &chat_id,
                                          const std::shared_ptr<std::string> &assistant_so_far);
   void maybe_bootstrap_chat();
