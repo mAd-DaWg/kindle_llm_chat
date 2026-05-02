@@ -21,11 +21,10 @@ public:
   void notify_stream_terminal(uint64_t epoch);
   void append_line(const std::string &role, const std::string &content);
   void begin_assistant_stream();
-  void append_assistant_token(const std::string &token);
   void end_assistant_stream();
   void refresh_usage_label(const ChatUsage &usage);
   /** Used from GTK idle callbacks (same TU); keeps stream tokens scoped to the correct chat. */
-  void try_stream_token_ui(const std::string &target_chat_id, const std::string &token, uint64_t stream_gen);
+  void try_stream_token_ui(const std::string &target_chat_id, uint64_t stream_gen);
   void catchup_streaming_ui();
 
 private:
@@ -71,7 +70,9 @@ private:
   gint bubble_width_for_layout() const;
   /** Adds a messenger-style row; returns the message GtkTextBuffer (empty `text` still creates a bubble). */
   GtkTextBuffer *add_chat_bubble(const std::string &role, const std::string &text, bool is_error);
-  /** Replace streamed assistant plain text with rendered markdown. */
+  /** Re-parse accumulated assistant plain text as markdown into the stream bubble. */
+  void rerender_streaming_assistant_plain(const std::string &full_plain);
+  /** Final markdown pass and tear down stream buffer mark. */
   void finish_assistant_markdown(const std::string &full_text);
   void refresh_usage_estimate_for_stream(const std::string &chat_id,
                                          const std::shared_ptr<std::string> &assistant_so_far);

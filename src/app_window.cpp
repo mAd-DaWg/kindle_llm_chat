@@ -67,7 +67,7 @@ gboolean AppWindow::idle_append_text(gpointer data) {
       return FALSE;
     }
     if (ev->stream_target_id == self->active_chat_id_) {
-      self->try_stream_token_ui(ev->stream_target_id, ev->text, ev->stream_gen);
+      self->try_stream_token_ui(ev->stream_target_id, ev->stream_gen);
     }
   } else if (ev->kind == UiTextEvent::Kind::AssistantDone) {
     if (ev->stream_gen == self->assistant_ui_epoch_ && ev->stream_target_id == self->active_chat_id_ &&
@@ -320,35 +320,32 @@ void AppWindow::begin_assistant_stream() {
   gtk_text_buffer_create_mark(stream_reply_buffer_, "assistant_body_start", &it, TRUE);
 }
 
-void AppWindow::append_assistant_token(const std::string &token) {
+void AppWindow::end_assistant_stream() {}
+
+void AppWindow::rerender_streaming_assistant_plain(const std::string &full_plain) {
   if (!stream_reply_buffer_) {
     return;
   }
-  GtkTextIter end;
-  gtk_text_buffer_get_end_iter(stream_reply_buffer_, &end);
-  gtk_text_buffer_insert(stream_reply_buffer_, &end, token.c_str(), -1);
-}
-
-void AppWindow::end_assistant_stream() {}
-
-void AppWindow::finish_assistant_markdown(const std::string &full_text) {
-  GtkTextBuffer *buf = stream_reply_buffer_;
-  if (!buf) {
-    return;
-  }
-  GtkTextMark *m = gtk_text_buffer_get_mark(buf, "assistant_body_start");
+  GtkTextMark *m = gtk_text_buffer_get_mark(stream_reply_buffer_, "assistant_body_start");
   if (!m) {
-    stream_reply_buffer_ = nullptr;
     return;
   }
   GtkTextIter ins;
   GtkTextIter end;
-  gtk_text_buffer_get_iter_at_mark(buf, &ins, m);
-  gtk_text_buffer_get_end_iter(buf, &end);
-  gtk_text_buffer_delete(buf, &ins, &end);
-  gtk_text_buffer_get_iter_at_mark(buf, &ins, m);
-  markdown_insert(buf, &ins, full_text);
-  gtk_text_buffer_delete_mark_by_name(buf, "assistant_body_start");
+  gtk_text_buffer_get_iter_at_mark(stream_reply_buffer_, &ins, m);
+  gtk_text_buffer_get_end_iter(stream_reply_buffer_, &end);
+  gtk_text_buffer_delete(stream_reply_buffer_, &ins, &end);
+  gtk_text_buffer_get_iter_at_mark(stream_reply_buffer_, &ins, m);
+  markdown_insert(stream_reply_buffer_, &ins, full_plain);
+  scroll_chat_to_bottom();
+}
+
+void AppWindow::finish_assistant_markdown(const std::string &full_text) {
+  if (!stream_reply_buffer_) {
+    return;
+  }
+  rerender_streaming_assistant_plain(full_text);
+  gtk_text_buffer_delete_mark_by_name(stream_reply_buffer_, "assistant_body_start");
   stream_reply_buffer_ = nullptr;
 }
 
@@ -605,8 +602,7 @@ bool AppWindow::stream_gen_is_active(uint64_t gen) const {
   return active_streams_.find(gen) != active_streams_.end();
 }
 
-void AppWindow::try_stream_token_ui(const std::string &target_chat_id, const std::string &token,
-                                    uint64_t stream_gen) {
+void AppWindow::try_stream_token_ui(const std::string &target_chat_id, uint64_t stream_gen) {
   if (target_chat_id != active_chat_id_) {
     return;
   }
@@ -624,7 +620,7 @@ void AppWindow::try_stream_token_ui(const std::string &target_chat_id, const std
     stream_ui_began_ = true;
     assistant_ui_epoch_ = stream_gen;
   }
-  append_assistant_token(token);
+  rerender_streaming_assistant_plain(*it->second.second);
   refresh_usage_estimate_for_stream(target_chat_id, it->second.second);
 }
 
@@ -645,7 +641,7 @@ void AppWindow::catchup_streaming_ui() {
     return;
   }
   begin_assistant_stream();
-  append_assistant_token(*buf);
+  rerender_streaming_assistant_plain(*buf);
   stream_ui_began_ = true;
   assistant_ui_epoch_ = gen;
   refresh_usage_estimate_for_stream(active_chat_id_, buf);
@@ -691,7 +687,6 @@ void AppWindow::on_send() {
     UiTextEvent *ev = new UiTextEvent{};
     ev->self = this;
     ev->kind = UiTextEvent::Kind::AssistantToken;
-    ev->text = token;
     ev->stream_target_id = chat_id;
     ev->stream_gen = stream_gen;
     g_idle_add(&AppWindow::idle_append_text, ev);

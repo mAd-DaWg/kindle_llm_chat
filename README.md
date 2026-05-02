@@ -7,10 +7,16 @@ Native Kindle GTK+ 2.0 chat client in C++ (Meson) for jailbroken devices.
 - ChatGPT-style sidebar for chat threads (create, switch, delete).
 - Persistent chat history (stored as JSON per chat thread).
 - Configurable backend URL/model/token for LM Studio and Ollama-style usage.
-- Real-time streamed responses (assistant text is rendered as Markdown when a reply finishes).
+- Real-time streamed responses with Markdown re-rendered in the assistant bubble as tokens arrive.
 - Context usage meter shown as percentage.
 - Toggleable on-screen keyboard with XML layouts (kterm-style format).
 - Top-right `X` button for graceful app exit.
+
+## Markdown
+
+Assistant and user bubbles are rendered with **[md4c](https://github.com/mity/md4c)** using **CommonMark** plus **GitHub-style** extensions (tables, task lists, strikethrough, permissive autolinks, and permissive `#Heading` without a required space after `#`). Paragraph breaks, soft vs hard line breaks, nested blockquotes, heading levels 1–6, and horizontal rules follow the same rules as the **[Markdown Guide — Basic Syntax](https://www.markdownguide.org/basic-syntax/)** (soft line breaks render as a space; “two spaces + newline” and related cases render as a hard line break; blank lines separate normal paragraphs).
+
+**GTK+ 2 limits:** formatting is done with `GtkTextView` tags (fonts, weights, colors, scale), not a full HTML engine. Images are shown as emphasized **alt text** only; complex HTML blocks may look plain. Behavior should match familiar ChatGPT-style Markdown for typical assistant replies.
 
 ## Build (desktop smoke test)
 
