@@ -26,15 +26,16 @@ Requirements:
 - `ninja`
 - `gtk+-2.0` development package
 - `glib-2.0` development package
-- `json-glib-1.0` development package
 - `libcurl` development package
+
+JSON is handled by **[cJSON](https://github.com/DaveGamble/cJSON)** in `third_party/cjson` (git submodule, built as a static library by Meson). No system json-glib package is required.
 
 Install dependencies
 ```sh
-sudo apt install build-essential autoconf automake bison flex gawk libtool libtool-bin libncurses-dev curl file git gperf help2man texinfo unzip wget cmake curl sed libarchive-dev nettle-dev meson gtk2.0 libgtk2.0-dev libcurl4-openssl-dev libjson-glib-dev
+sudo apt install build-essential meson ninja-build libgtk2.0-dev libcurl4-openssl-dev pkg-config
 ```
 
-Clone this repository with submodules (Markdown parsing uses [md4c](https://github.com/mity/md4c) from `third_party/md4c`):
+Clone this repository with submodules (`third_party/md4c`, `third_party/cjson`):
 
 ```sh
 git clone --recursive https://github.com/mAd-DaWg/kindle_llm_chat.git
@@ -96,6 +97,7 @@ meson setup --cross-file <meson_crosscompile_path> builddir_kindlehf
 meson compile -C builddir_kindlehf
 ```
 
+**Cross file:** use the `meson-crosscompile.txt` path printed at the end of `./gen-sdk.sh kindlehf` (for kindlehf it is usually `~/x-tools/arm-kindlehf-linux-gnueabihf/meson-crosscompile.txt`). Pass that file to `meson setup --cross-file …`; do not edit it unless your toolchain lives in a different directory.
 
 ## Runtime Configuration
 

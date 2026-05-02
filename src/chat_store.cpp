@@ -1,11 +1,45 @@
 #include "chat_store.h"
+#include "json_file.h"
 #include <algorithm>
+#include <cstdlib>
 #include <ctime>
 #include <filesystem>
-#include <json-glib/json-glib.h>
+#include <glib.h>
 #include <sstream>
 
+extern "C" {
+#include <cJSON.h>
+}
+
 namespace fs = std::filesystem;
+
+namespace {
+
+std::string jstr(cJSON *o, const char *key) {
+  cJSON *it = cJSON_GetObjectItemCaseSensitive(o, key);
+  if (!cJSON_IsString(it) || !it->valuestring) {
+    return {};
+  }
+  return std::string(it->valuestring);
+}
+
+long jint(cJSON *o, const char *key, long def = 0) {
+  cJSON *it = cJSON_GetObjectItemCaseSensitive(o, key);
+  if (!cJSON_IsNumber(it)) {
+    return def;
+  }
+  return static_cast<long>(it->valuedouble);
+}
+
+double jdouble(cJSON *o, const char *key, double def = 0.0) {
+  cJSON *it = cJSON_GetObjectItemCaseSensitive(o, key);
+  if (!cJSON_IsNumber(it)) {
+    return def;
+  }
+  return it->valuedouble;
+}
+
+} // namespace
 
 ChatStore::ChatStore(const std::string &base_dir) : base_dir_(base_dir) {}
 
@@ -35,110 +69,83 @@ bool ChatStore::load() {
     return true;
   }
 
-  JsonParser *parser = json_parser_new();
-  GError *error = nullptr;
-  if (!json_parser_load_from_file(parser, index_path().c_str(), &error)) {
-    if (error) {
-      g_error_free(error);
-    }
-    g_object_unref(parser);
+  std::string raw;
+  if (!read_full_file(index_path(), &raw)) {
     return false;
   }
-
-  JsonNode *root = json_parser_get_root(parser);
-  JsonArray *arr = json_node_get_array(root);
-  const guint n = json_array_get_length(arr);
-  for (guint i = 0; i < n; ++i) {
-    JsonObject *obj = json_array_get_object_element(arr, i);
-    const char *id = json_object_get_string_member(obj, "id");
-    if (id) {
-      load_thread(id);
+  cJSON *root = cJSON_Parse(raw.c_str());
+  if (!root || !cJSON_IsArray(root)) {
+    if (root) {
+      cJSON_Delete(root);
+    }
+    return false;
+  }
+  cJSON *el = nullptr;
+  cJSON_ArrayForEach(el, root) {
+    if (!cJSON_IsObject(el)) {
+      continue;
+    }
+    const std::string id_s = jstr(el, "id");
+    if (!id_s.empty()) {
+      load_thread(id_s);
     }
   }
-  g_object_unref(parser);
+  cJSON_Delete(root);
   return true;
 }
 
 bool ChatStore::save_all() const {
   ensure_dirs();
-  JsonBuilder *builder = json_builder_new();
-  json_builder_begin_array(builder);
+  cJSON *arr = cJSON_CreateArray();
   for (const auto &thread : threads_) {
     save_thread(thread);
-    json_builder_begin_object(builder);
-    json_builder_set_member_name(builder, "id");
-    json_builder_add_string_value(builder, thread.id.c_str());
-    json_builder_end_object(builder);
+    cJSON *one = cJSON_CreateObject();
+    cJSON_AddStringToObject(one, "id", thread.id.c_str());
+    cJSON_AddItemToArray(arr, one);
   }
-  json_builder_end_array(builder);
-
-  JsonGenerator *gen = json_generator_new();
-  JsonNode *node = json_builder_get_root(builder);
-  json_generator_set_root(gen, node);
-  GError *error = nullptr;
-  json_generator_to_file(gen, index_path().c_str(), &error);
-  if (error) {
-    g_error_free(error);
+  char *printed = cJSON_PrintUnformatted(arr);
+  cJSON_Delete(arr);
+  if (!printed) {
+    return false;
   }
-  json_node_free(node);
-  g_object_unref(gen);
-  g_object_unref(builder);
-  return error == nullptr;
+  const std::string data(printed);
+  std::free(printed);
+  return write_full_file(index_path(), data);
 }
 
 bool ChatStore::save_thread(const ChatThread &thread) const {
-  JsonBuilder *builder = json_builder_new();
-  json_builder_begin_object(builder);
-  json_builder_set_member_name(builder, "id");
-  json_builder_add_string_value(builder, thread.id.c_str());
-  json_builder_set_member_name(builder, "title");
-  json_builder_add_string_value(builder, thread.title.c_str());
-  json_builder_set_member_name(builder, "model");
-  json_builder_add_string_value(builder, thread.model.c_str());
-  json_builder_set_member_name(builder, "created_at");
-  json_builder_add_int_value(builder, thread.created_at);
+  cJSON *root = cJSON_CreateObject();
+  cJSON_AddStringToObject(root, "id", thread.id.c_str());
+  cJSON_AddStringToObject(root, "title", thread.title.c_str());
+  cJSON_AddStringToObject(root, "model", thread.model.c_str());
+  cJSON_AddNumberToObject(root, "created_at", static_cast<double>(thread.created_at));
 
-  json_builder_set_member_name(builder, "messages");
-  json_builder_begin_array(builder);
+  cJSON *msgs = cJSON_CreateArray();
   for (const auto &message : thread.messages) {
-    json_builder_begin_object(builder);
-    json_builder_set_member_name(builder, "role");
-    json_builder_add_string_value(builder, message.role.c_str());
-    json_builder_set_member_name(builder, "content");
-    json_builder_add_string_value(builder, message.content.c_str());
-    json_builder_set_member_name(builder, "timestamp");
-    json_builder_add_int_value(builder, message.timestamp);
-    json_builder_end_object(builder);
+    cJSON *m = cJSON_CreateObject();
+    cJSON_AddStringToObject(m, "role", message.role.c_str());
+    cJSON_AddStringToObject(m, "content", message.content.c_str());
+    cJSON_AddNumberToObject(m, "timestamp", static_cast<double>(message.timestamp));
+    cJSON_AddItemToArray(msgs, m);
   }
-  json_builder_end_array(builder);
+  cJSON_AddItemToObject(root, "messages", msgs);
 
-  json_builder_set_member_name(builder, "last_usage");
-  json_builder_begin_object(builder);
-  json_builder_set_member_name(builder, "prompt_tokens");
-  json_builder_add_int_value(builder, thread.last_usage.prompt_tokens);
-  json_builder_set_member_name(builder, "completion_tokens");
-  json_builder_add_int_value(builder, thread.last_usage.completion_tokens);
-  json_builder_set_member_name(builder, "total_tokens");
-  json_builder_add_int_value(builder, thread.last_usage.total_tokens);
-  json_builder_set_member_name(builder, "context_percent");
-  json_builder_add_double_value(builder, thread.last_usage.context_percent);
-  json_builder_end_object(builder);
+  cJSON *u = cJSON_CreateObject();
+  cJSON_AddNumberToObject(u, "prompt_tokens", static_cast<double>(thread.last_usage.prompt_tokens));
+  cJSON_AddNumberToObject(u, "completion_tokens", static_cast<double>(thread.last_usage.completion_tokens));
+  cJSON_AddNumberToObject(u, "total_tokens", static_cast<double>(thread.last_usage.total_tokens));
+  cJSON_AddNumberToObject(u, "context_percent", thread.last_usage.context_percent);
+  cJSON_AddItemToObject(root, "last_usage", u);
 
-  json_builder_end_object(builder);
-
-  std::string path = chats_dir() + "/" + thread.id + ".json";
-  JsonGenerator *gen = json_generator_new();
-  JsonNode *node = json_builder_get_root(builder);
-  json_generator_set_root(gen, node);
-  GError *error = nullptr;
-  json_generator_to_file(gen, path.c_str(), &error);
-  if (error) {
-    g_error_free(error);
+  char *printed = cJSON_PrintUnformatted(root);
+  cJSON_Delete(root);
+  if (!printed) {
+    return false;
   }
-  json_node_free(node);
-  g_object_unref(gen);
-  g_object_unref(builder);
-  return error == nullptr;
+  const std::string data(printed);
+  std::free(printed);
+  const std::string path = chats_dir() + "/" + thread.id + ".json";
+  return write_full_file(path, data);
 }
 
 bool ChatStore::load_thread(const std::string &id) {
@@ -146,46 +153,47 @@ bool ChatStore::load_thread(const std::string &id) {
   if (!fs::exists(path)) {
     return false;
   }
-  JsonParser *parser = json_parser_new();
-  GError *error = nullptr;
-  if (!json_parser_load_from_file(parser, path.c_str(), &error)) {
-    if (error) {
-      g_error_free(error);
-    }
-    g_object_unref(parser);
+  std::string raw;
+  if (!read_full_file(path, &raw)) {
     return false;
   }
-  JsonNode *root = json_parser_get_root(parser);
-  JsonObject *obj = json_node_get_object(root);
-  ChatThread thread;
-  thread.id = json_object_get_string_member(obj, "id");
-  thread.title = json_object_get_string_member(obj, "title");
-  if (json_object_has_member(obj, "model")) {
-    thread.model = json_object_get_string_member(obj, "model");
+  cJSON *obj = cJSON_Parse(raw.c_str());
+  if (!obj || !cJSON_IsObject(obj)) {
+    if (obj) {
+      cJSON_Delete(obj);
+    }
+    return false;
   }
-  thread.created_at = json_object_get_int_member(obj, "created_at");
 
-  JsonArray *messages = json_object_get_array_member(obj, "messages");
-  if (messages) {
-    const guint n = json_array_get_length(messages);
-    for (guint i = 0; i < n; ++i) {
-      JsonObject *m = json_array_get_object_element(messages, i);
+  ChatThread thread;
+  thread.id = jstr(obj, "id");
+  thread.title = jstr(obj, "title");
+  thread.model = jstr(obj, "model");
+  thread.created_at = jint(obj, "created_at");
+
+  cJSON *messages = cJSON_GetObjectItemCaseSensitive(obj, "messages");
+  if (cJSON_IsArray(messages)) {
+    cJSON *m = nullptr;
+    cJSON_ArrayForEach(m, messages) {
+      if (!cJSON_IsObject(m)) {
+        continue;
+      }
       ChatMessage msg;
-      msg.role = json_object_get_string_member(m, "role");
-      msg.content = json_object_get_string_member(m, "content");
-      msg.timestamp = json_object_get_int_member(m, "timestamp");
+      msg.role = jstr(m, "role");
+      msg.content = jstr(m, "content");
+      msg.timestamp = jint(m, "timestamp");
       thread.messages.push_back(msg);
     }
   }
-  if (json_object_has_member(obj, "last_usage")) {
-    JsonObject *u = json_object_get_object_member(obj, "last_usage");
-    thread.last_usage.prompt_tokens = json_object_get_int_member(u, "prompt_tokens");
-    thread.last_usage.completion_tokens = json_object_get_int_member(u, "completion_tokens");
-    thread.last_usage.total_tokens = json_object_get_int_member(u, "total_tokens");
-    thread.last_usage.context_percent = json_object_get_double_member(u, "context_percent");
+  cJSON *last = cJSON_GetObjectItemCaseSensitive(obj, "last_usage");
+  if (cJSON_IsObject(last)) {
+    thread.last_usage.prompt_tokens = static_cast<int>(jint(last, "prompt_tokens"));
+    thread.last_usage.completion_tokens = static_cast<int>(jint(last, "completion_tokens"));
+    thread.last_usage.total_tokens = static_cast<int>(jint(last, "total_tokens"));
+    thread.last_usage.context_percent = jdouble(last, "context_percent");
   }
   threads_.push_back(thread);
-  g_object_unref(parser);
+  cJSON_Delete(obj);
   return true;
 }
 

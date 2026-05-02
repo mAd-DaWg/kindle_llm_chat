@@ -1,10 +1,14 @@
 #include "http_client.h"
 #include <curl/curl.h>
 #include <glib.h>
-#include <json-glib/json-glib.h>
+#include <cstdlib>
 #include <future>
 #include <memory>
 #include <thread>
+
+extern "C" {
+#include <cJSON.h>
+}
 
 namespace {
 struct CurlCtx {
@@ -70,43 +74,42 @@ std::string models_list_url(const AppConfig &cfg) {
   return trim_trailing_slash(cfg.base_url) + "/models";
 }
 
-bool parse_models_json(const AppConfig &cfg, JsonObject *root, std::vector<std::string> &models,
-                        std::string &error) {
+bool parse_models_json(const AppConfig &cfg, cJSON *root, std::vector<std::string> &models, std::string &error) {
   models.clear();
-  if (!root) {
+  if (!root || !cJSON_IsObject(root)) {
     error = "Empty model list JSON";
     return false;
   }
   if (cfg.backend_mode == "ollama") {
-    if (!json_object_has_member(root, "models")) {
+    cJSON *arr = cJSON_GetObjectItemCaseSensitive(root, "models");
+    if (!cJSON_IsArray(arr)) {
       error = "Ollama model list missing \"models\" array";
       return false;
     }
-    JsonArray *arr = json_object_get_array_member(root, "models");
-    const guint n = json_array_get_length(arr);
-    for (guint i = 0; i < n; ++i) {
-      JsonObject *item = json_array_get_object_element(arr, i);
-      if (item && json_object_has_member(item, "name")) {
-        const char *name = json_object_get_string_member(item, "name");
-        if (name && *name) {
-          models.push_back(name);
-        }
+    cJSON *item = nullptr;
+    cJSON_ArrayForEach(item, arr) {
+      if (!cJSON_IsObject(item)) {
+        continue;
+      }
+      cJSON *name = cJSON_GetObjectItemCaseSensitive(item, "name");
+      if (cJSON_IsString(name) && name->valuestring && name->valuestring[0]) {
+        models.emplace_back(name->valuestring);
       }
     }
   } else {
-    if (!json_object_has_member(root, "data")) {
+    cJSON *data = cJSON_GetObjectItemCaseSensitive(root, "data");
+    if (!cJSON_IsArray(data)) {
       error = "Model list JSON missing \"data\" array (expected OpenAI-compatible /v1/models)";
       return false;
     }
-    JsonArray *data = json_object_get_array_member(root, "data");
-    const guint n = json_array_get_length(data);
-    for (guint i = 0; i < n; ++i) {
-      JsonObject *item = json_array_get_object_element(data, i);
-      if (item && json_object_has_member(item, "id")) {
-        const char *id = json_object_get_string_member(item, "id");
-        if (id && *id) {
-          models.push_back(id);
-        }
+    cJSON *item = nullptr;
+    cJSON_ArrayForEach(item, data) {
+      if (!cJSON_IsObject(item)) {
+        continue;
+      }
+      cJSON *id = cJSON_GetObjectItemCaseSensitive(item, "id");
+      if (cJSON_IsString(id) && id->valuestring && id->valuestring[0]) {
+        models.emplace_back(id->valuestring);
       }
     }
   }
@@ -160,25 +163,18 @@ FetchModelsOutcome fetch_models_worker(AppConfig cfg) {
     return out;
   }
 
-  JsonParser *parser = json_parser_new();
-  GError *parse_error = nullptr;
-  if (!json_parser_load_from_data(parser, response.c_str(), response.size(), &parse_error)) {
-    if (parse_error) {
-      out.error = parse_error->message ? parse_error->message : "Failed to parse model list JSON";
-      g_error_free(parse_error);
-    }
-    g_object_unref(parser);
+  cJSON *root = cJSON_Parse(response.c_str());
+  if (!root) {
+    out.error = "Failed to parse model list JSON";
     return out;
   }
-
-  JsonObject *root = json_node_get_object(json_parser_get_root(parser));
   std::string parse_err;
   if (!parse_models_json(cfg, root, out.models, parse_err)) {
-    g_object_unref(parser);
+    cJSON_Delete(root);
     out.error = parse_err;
     return out;
   }
-  g_object_unref(parser);
+  cJSON_Delete(root);
 
   out.ok = true;
   return out;
@@ -245,37 +241,35 @@ bool HttpClient::stream_chat(const AppConfig &config,
       return;
     }
 
-    JsonBuilder *builder = json_builder_new();
-    json_builder_begin_object(builder);
-    json_builder_set_member_name(builder, "model");
-    json_builder_add_string_value(builder, config.model.c_str());
-    json_builder_set_member_name(builder, "stream");
-    json_builder_add_boolean_value(builder, TRUE);
-    /* OpenAI-compatible: without this, streamed chunks almost never include `usage`. */
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "model", config.model.c_str());
+    cJSON_AddTrueToObject(root, "stream");
     if (config.backend_mode != "ollama") {
-      json_builder_set_member_name(builder, "stream_options");
-      json_builder_begin_object(builder);
-      json_builder_set_member_name(builder, "include_usage");
-      json_builder_add_boolean_value(builder, TRUE);
-      json_builder_end_object(builder);
+      cJSON *so = cJSON_CreateObject();
+      cJSON_AddTrueToObject(so, "include_usage");
+      cJSON_AddItemToObject(root, "stream_options", so);
     }
-    json_builder_set_member_name(builder, "messages");
-    json_builder_begin_array(builder);
+    cJSON *arr = cJSON_CreateArray();
     for (const auto &msg : messages) {
-      json_builder_begin_object(builder);
-      json_builder_set_member_name(builder, "role");
-      json_builder_add_string_value(builder, msg.role.c_str());
-      json_builder_set_member_name(builder, "content");
-      json_builder_add_string_value(builder, msg.content.c_str());
-      json_builder_end_object(builder);
+      cJSON *m = cJSON_CreateObject();
+      cJSON_AddStringToObject(m, "role", msg.role.c_str());
+      cJSON_AddStringToObject(m, "content", msg.content.c_str());
+      cJSON_AddItemToArray(arr, m);
     }
-    json_builder_end_array(builder);
-    json_builder_end_object(builder);
+    cJSON_AddItemToObject(root, "messages", arr);
 
-    JsonGenerator *gen = json_generator_new();
-    JsonNode *node = json_builder_get_root(builder);
-    json_generator_set_root(gen, node);
-    gchar *json_payload = json_generator_to_data(gen, nullptr);
+    char *json_payload = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!json_payload) {
+      if (callbacks.on_error) {
+        callbacks.on_error("Could not build request JSON");
+      }
+      curl_easy_cleanup(curl);
+      schedule_slot_join(slot);
+      return;
+    }
+    std::string post_body(json_payload);
+    std::free(json_payload);
 
     std::string url = config.base_url;
     if (config.backend_mode == "ollama") {
@@ -304,7 +298,8 @@ bool HttpClient::stream_chat(const AppConfig &config,
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_POST, 1L);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_payload);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_body.c_str());
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(post_body.size()));
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
     curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
@@ -325,10 +320,6 @@ bool HttpClient::stream_chat(const AppConfig &config,
 
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
-    g_free(json_payload);
-    json_node_free(node);
-    g_object_unref(gen);
-    g_object_unref(builder);
 
     schedule_slot_join(slot);
   });

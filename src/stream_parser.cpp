@@ -1,6 +1,9 @@
 #include "stream_parser.h"
 #include <algorithm>
-#include <json-glib/json-glib.h>
+
+extern "C" {
+#include <cJSON.h>
+}
 
 StreamParser::StreamParser(const AppConfig &config) : config_(config) {}
 
@@ -15,85 +18,82 @@ void StreamParser::update_context_percent(ChatUsage &usage) const {
 }
 
 void StreamParser::parse_openai_chunk(const std::string &json_line, const StreamCallbacks &callbacks) {
-  JsonParser *parser = json_parser_new();
-  GError *error = nullptr;
-  if (!json_parser_load_from_data(parser, json_line.c_str(), json_line.size(), &error)) {
-    if (error) {
-      g_error_free(error);
+  cJSON *obj = cJSON_Parse(json_line.c_str());
+  if (!obj || !cJSON_IsObject(obj)) {
+    if (obj) {
+      cJSON_Delete(obj);
     }
-    g_object_unref(parser);
     return;
   }
 
-  JsonObject *obj = json_node_get_object(json_parser_get_root(parser));
-  if (json_object_has_member(obj, "choices")) {
-    JsonArray *choices = json_object_get_array_member(obj, "choices");
-    if (choices && json_array_get_length(choices) > 0) {
-      JsonObject *choice = json_array_get_object_element(choices, 0);
-      if (json_object_has_member(choice, "delta")) {
-        JsonObject *delta = json_object_get_object_member(choice, "delta");
-        if (json_object_has_member(delta, "content")) {
-          const char *token = json_object_get_string_member(delta, "content");
-          if (token && callbacks.on_token) {
-            callbacks.on_token(token);
-          }
+  cJSON *choices = cJSON_GetObjectItemCaseSensitive(obj, "choices");
+  if (cJSON_IsArray(choices) && cJSON_GetArraySize(choices) > 0) {
+    cJSON *choice = cJSON_GetArrayItem(choices, 0);
+    if (cJSON_IsObject(choice)) {
+      cJSON *delta = cJSON_GetObjectItemCaseSensitive(choice, "delta");
+      if (cJSON_IsObject(delta)) {
+        cJSON *content = cJSON_GetObjectItemCaseSensitive(delta, "content");
+        if (cJSON_IsString(content) && content->valuestring && callbacks.on_token) {
+          callbacks.on_token(content->valuestring);
         }
       }
     }
   }
-  if (json_object_has_member(obj, "usage")) {
-    JsonNode *usage_node = json_object_get_member(obj, "usage");
-    if (usage_node && json_node_get_node_type(usage_node) == JSON_NODE_OBJECT) {
-      JsonObject *usage = json_object_get_object_member(obj, "usage");
-      if (json_object_has_member(usage, "prompt_tokens")) {
-        usage_.prompt_tokens = static_cast<int>(json_object_get_int_member(usage, "prompt_tokens"));
-      }
-      if (json_object_has_member(usage, "completion_tokens")) {
-        usage_.completion_tokens = static_cast<int>(json_object_get_int_member(usage, "completion_tokens"));
-      }
-      if (json_object_has_member(usage, "total_tokens")) {
-        usage_.total_tokens = static_cast<int>(json_object_get_int_member(usage, "total_tokens"));
-      } else {
-        usage_.total_tokens = usage_.prompt_tokens + usage_.completion_tokens;
-      }
-      update_context_percent(usage_);
-      if (callbacks.on_usage &&
-          (usage_.total_tokens > 0 || usage_.prompt_tokens > 0 || usage_.completion_tokens > 0)) {
-        callbacks.on_usage(usage_);
-      }
+
+  cJSON *usage = cJSON_GetObjectItemCaseSensitive(obj, "usage");
+  if (cJSON_IsObject(usage)) {
+    cJSON *pt = cJSON_GetObjectItemCaseSensitive(usage, "prompt_tokens");
+    if (cJSON_IsNumber(pt)) {
+      usage_.prompt_tokens = static_cast<int>(pt->valuedouble);
+    }
+    cJSON *ct = cJSON_GetObjectItemCaseSensitive(usage, "completion_tokens");
+    if (cJSON_IsNumber(ct)) {
+      usage_.completion_tokens = static_cast<int>(ct->valuedouble);
+    }
+    cJSON *tt = cJSON_GetObjectItemCaseSensitive(usage, "total_tokens");
+    if (cJSON_IsNumber(tt)) {
+      usage_.total_tokens = static_cast<int>(tt->valuedouble);
+    } else {
+      usage_.total_tokens = usage_.prompt_tokens + usage_.completion_tokens;
+    }
+    update_context_percent(usage_);
+    if (callbacks.on_usage &&
+        (usage_.total_tokens > 0 || usage_.prompt_tokens > 0 || usage_.completion_tokens > 0)) {
+      callbacks.on_usage(usage_);
     }
   }
-  g_object_unref(parser);
+  cJSON_Delete(obj);
 }
 
 void StreamParser::parse_ollama_chunk(const std::string &json_line, const StreamCallbacks &callbacks) {
-  JsonParser *parser = json_parser_new();
-  GError *error = nullptr;
-  if (!json_parser_load_from_data(parser, json_line.c_str(), json_line.size(), &error)) {
-    if (error) {
-      g_error_free(error);
+  cJSON *obj = cJSON_Parse(json_line.c_str());
+  if (!obj || !cJSON_IsObject(obj)) {
+    if (obj) {
+      cJSON_Delete(obj);
     }
-    g_object_unref(parser);
     return;
   }
-  JsonObject *obj = json_node_get_object(json_parser_get_root(parser));
 
-  if (json_object_has_member(obj, "message")) {
-    JsonObject *message = json_object_get_object_member(obj, "message");
-    if (message && json_object_has_member(message, "content") && callbacks.on_token) {
-      const char *token = json_object_get_string_member(message, "content");
-      callbacks.on_token(token ? token : "");
+  cJSON *message = cJSON_GetObjectItemCaseSensitive(obj, "message");
+  if (cJSON_IsObject(message)) {
+    cJSON *content = cJSON_GetObjectItemCaseSensitive(message, "content");
+    if (cJSON_IsString(content) && callbacks.on_token) {
+      callbacks.on_token(content->valuestring ? content->valuestring : "");
     }
-  } else if (json_object_has_member(obj, "response") && callbacks.on_token) {
-    const char *token = json_object_get_string_member(obj, "response");
-    callbacks.on_token(token ? token : "");
+  } else {
+    cJSON *response = cJSON_GetObjectItemCaseSensitive(obj, "response");
+    if (cJSON_IsString(response) && callbacks.on_token) {
+      callbacks.on_token(response->valuestring ? response->valuestring : "");
+    }
   }
 
-  if (json_object_has_member(obj, "prompt_eval_count")) {
-    usage_.prompt_tokens = json_object_get_int_member(obj, "prompt_eval_count");
+  cJSON *pec = cJSON_GetObjectItemCaseSensitive(obj, "prompt_eval_count");
+  if (cJSON_IsNumber(pec)) {
+    usage_.prompt_tokens = static_cast<int>(pec->valuedouble);
   }
-  if (json_object_has_member(obj, "eval_count")) {
-    usage_.completion_tokens = json_object_get_int_member(obj, "eval_count");
+  cJSON *ec = cJSON_GetObjectItemCaseSensitive(obj, "eval_count");
+  if (cJSON_IsNumber(ec)) {
+    usage_.completion_tokens = static_cast<int>(ec->valuedouble);
   }
   usage_.total_tokens = usage_.prompt_tokens + usage_.completion_tokens;
   update_context_percent(usage_);
@@ -101,13 +101,16 @@ void StreamParser::parse_ollama_chunk(const std::string &json_line, const Stream
     callbacks.on_usage(usage_);
   }
 
-  if (json_object_has_member(obj, "done") && json_object_get_boolean_member(obj, "done")) {
+  cJSON *done = cJSON_GetObjectItemCaseSensitive(obj, "done");
+  const bool done_val =
+      (cJSON_IsBool(done) && cJSON_IsTrue(done)) || (cJSON_IsNumber(done) && done->valuedouble != 0.0);
+  if (done_val) {
     stream_done_ = true;
     if (callbacks.on_done) {
       callbacks.on_done();
     }
   }
-  g_object_unref(parser);
+  cJSON_Delete(obj);
 }
 
 void StreamParser::parse_line(const std::string &line, const StreamCallbacks &callbacks) {

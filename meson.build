@@ -8,11 +8,23 @@ project('kindle_llm_chat', ['c', 'cpp'],
 
 gtk_dep = dependency('gtk+-2.0')
 glib_dep = dependency('glib-2.0')
-json_glib_dep = dependency('json-glib-1.0')
 curl_dep = dependency('libcurl')
 
 inc = include_directories('src')
 md4c_inc = include_directories('third_party/md4c/src')
+cjson_inc = include_directories('third_party/cjson')
+
+cjson_lib = static_library(
+  'cjson',
+  'third_party/cjson/cJSON.c',
+  include_directories: cjson_inc,
+  override_options: ['c_std=c99'],
+)
+
+cjson_dep = declare_dependency(
+  link_with: cjson_lib,
+  include_directories: cjson_inc,
+)
 
 md4c_lib = static_library(
   'md4c',
@@ -41,7 +53,7 @@ executable(
   'kindle-llm-chat',
   sources,
   include_directories: inc,
-  dependencies: [gtk_dep, glib_dep, json_glib_dep, curl_dep, md4c_dep],
+  dependencies: [gtk_dep, glib_dep, cjson_dep, curl_dep, md4c_dep],
   cpp_args: '-static-libstdc++',
   link_args: '-static-libstdc++'
 )
