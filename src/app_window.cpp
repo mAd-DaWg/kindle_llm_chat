@@ -40,6 +40,8 @@ gboolean idle_stream_terminal(gpointer data) {
 }
 
 constexpr const char *kBubbleTextViewKey = "kllc-bubble-tv";
+/** GtkTextBuffer → GtkWidget (text view) for queue_resize after buffer edits without a widget pointer. */
+constexpr const char *kBubbleBufferTvKey = "kllc-bubble-tv-ptr";
 constexpr gint kBubbleCornerRadiusPx = 12;
 
 /** Filled rounded-rectangle region in widget-local coordinates (GTK+2 has no border-radius). */
@@ -130,6 +132,49 @@ void bubble_apply_rounded_shape(GtkWidget *eb, GtkWidget *tv) {
 
 void on_bubble_eb_size_allocate(GtkWidget *eb, GtkAllocation * /*alloc*/, gpointer tv) {
   bubble_apply_rounded_shape(eb, GTK_WIDGET(tv));
+}
+
+/** GtkTextView's default size-request often leaves a tall blank band; shrink to wrapped display lines. */
+static gint bubble_measure_tv_content_height(GtkTextView *tv) {
+  GtkWidget *w = GTK_WIDGET(tv);
+  if (!GTK_WIDGET_REALIZED(w)) {
+    return -1;
+  }
+  GtkTextBuffer *buf = gtk_text_view_get_buffer(tv);
+  GtkTextIter scan;
+  gtk_text_buffer_get_start_iter(buf, &scan);
+  gint max_bottom = 0;
+  for (;;) {
+    gint y = 0;
+    gint lh = 0;
+    gtk_text_view_get_line_yrange(tv, &scan, &y, &lh);
+    const gint bottom = y + lh;
+    if (bottom > max_bottom) {
+      max_bottom = bottom;
+    }
+    if (!gtk_text_view_forward_display_line(tv, &scan)) {
+      break;
+    }
+  }
+  if (max_bottom <= 0) {
+    return -1;
+  }
+  const gint bt = gtk_text_view_get_border_window_size(tv, GTK_TEXT_WINDOW_TOP);
+  const gint bb = gtk_text_view_get_border_window_size(tv, GTK_TEXT_WINDOW_BOTTOM);
+  return max_bottom + bt + bb + 4;
+}
+
+static void on_bubble_tv_size_request(GtkWidget *widget, GtkRequisition *req, gpointer /*data*/) {
+  const gint want = bubble_measure_tv_content_height(GTK_TEXT_VIEW(widget));
+  if (want > 0) {
+    req->height = std::min(req->height, want);
+  }
+}
+
+static void bubble_queue_resize_for_buffer(GtkTextBuffer *buf) {
+  if (GtkWidget *w = GTK_WIDGET(g_object_get_data(G_OBJECT(buf), kBubbleBufferTvKey))) {
+    gtk_widget_queue_resize(w);
+  }
 }
 
 gint bubble_width_from_scroll_width(gint scroll_w) {
@@ -365,6 +410,7 @@ GtkTextBuffer *AppWindow::add_chat_bubble(const std::string &role, const std::st
 
   gtk_container_add(GTK_CONTAINER(eb), tv);
   g_signal_connect_after(eb, "size-allocate", G_CALLBACK(on_bubble_eb_size_allocate), tv);
+  g_signal_connect_after(tv, "size-request", G_CALLBACK(on_bubble_tv_size_request), nullptr);
 
   GtkWidget *sp_l = gtk_alignment_new(0, 0, 1, 1);
   GtkWidget *sp_r = gtk_alignment_new(0, 0, 1, 1);
@@ -389,6 +435,7 @@ GtkTextBuffer *AppWindow::add_chat_bubble(const std::string &role, const std::st
   gtk_widget_show_all(row);
 
   GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tv));
+  g_object_set_data(G_OBJECT(buf), kBubbleBufferTvKey, tv);
   markdown_ensure_tags(buf);
   if (is_error) {
     GtkTextIter pos;
@@ -399,6 +446,7 @@ GtkTextBuffer *AppWindow::add_chat_bubble(const std::string &role, const std::st
     gtk_text_buffer_get_end_iter(buf, &end);
     markdown_insert(buf, &end, text);
   }
+  bubble_queue_resize_for_buffer(buf);
   return buf;
 }
 
@@ -431,6 +479,7 @@ void AppWindow::rerender_streaming_assistant_plain(const std::string &full_plain
   gtk_text_buffer_delete(stream_reply_buffer_, &ins, &end);
   gtk_text_buffer_get_iter_at_mark(stream_reply_buffer_, &ins, m);
   markdown_insert(stream_reply_buffer_, &ins, full_plain);
+  bubble_queue_resize_for_buffer(stream_reply_buffer_);
   scroll_chat_to_bottom();
 }
 
