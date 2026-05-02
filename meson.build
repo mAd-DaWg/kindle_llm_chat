@@ -9,6 +9,7 @@ project('kindle_llm_chat', ['c', 'cpp'],
 gtk_dep = dependency('gtk+-2.0')
 glib_dep = dependency('glib-2.0')
 curl_dep = dependency('libcurl')
+thread_dep = dependency('threads')
 
 inc = include_directories('src')
 md4c_inc = include_directories('third_party/md4c/src')
@@ -53,7 +54,7 @@ executable(
   'kindle-llm-chat',
   sources,
   include_directories: inc,
-  dependencies: [gtk_dep, glib_dep, cjson_dep, curl_dep, md4c_dep],
+  dependencies: [gtk_dep, glib_dep, cjson_dep, curl_dep, md4c_dep, thread_dep],
   cpp_args: '-static-libstdc++',
   link_args: '-static-libstdc++'
 )

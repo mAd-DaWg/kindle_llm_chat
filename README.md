@@ -32,7 +32,7 @@ JSON is handled by **[cJSON](https://github.com/DaveGamble/cJSON)** in `third_pa
 
 Install dependencies
 ```sh
-sudo apt install build-essential meson ninja-build libgtk2.0-dev libcurl4-openssl-dev pkg-config
+sudo apt install build-essential autoconf automake bison flex gawk libtool libtool-bin libncurses-dev curl file git gperf help2man texinfo unzip wget cmake curl sed libarchive-dev nettle-dev meson gtk2.0 libgtk2.0-dev libcurl4-openssl-dev libjson-glib-dev
 ```
 
 Clone this repository with submodules (`third_party/md4c`, `third_party/cjson`):
@@ -120,20 +120,20 @@ Chats are persisted in:
 
 ## Kindle Packaging (KUAL/MRPI)
 
-1. Build binary using your Kindle toolchain (see crosscompile commands above).
-2. Place resulting binary at:
-   - `builddir/kindle-llm-chat`
-3. Create package artifact:
+1. Cross-compile so `builddir_kindlehf/kindle-llm-chat` exists (see commands above).
+2. Create the archive (script copies from that path by default):
 
 ```sh
 ./tools/package_mrpi.sh
 ```
 
+To package a different Meson build directory: `./tools/package_mrpi.sh other_build_dir` or `KINDLE_LLM_CHAT_BUILD_DIR=other_build_dir ./tools/package_mrpi.sh`.
+
 This produces:
 
 - `dist/kindle-llm-chat-mrpi.tar.gz`
 
-The archive contains `extensions/kindle_llm_chat/*` for deployment on Kindle USB storage root.
+The archive contains `extensions/kindle_llm_chat/*` (`config.xml`, `menu.json`, `bin/`, `layouts/`) for deployment on Kindle USB storage root.
 
 ## KUAL Launcher
 
@@ -141,8 +141,9 @@ Launcher script:
 
 - `kindle.pkg/bin/run.sh`
 
-KUAL menu definition:
+KUAL extension metadata and menu:
 
+- `kindle.pkg/config.xml` (required beside `menu.json` on the device)
 - `kindle.pkg/menu.json`
 
 Keyboard layouts:
@@ -151,6 +152,20 @@ Keyboard layouts:
 - `kindle.pkg/layouts/keyboard-300dpi.xml`
 
 `run.sh` auto-selects layout based on Kindle DPI.
+
+### If the extension appears in KUAL but does not start
+
+1. **Launch log (after redeploying `run.sh`):** each start appends to  
+   `/mnt/us/extensions/kindle_llm_chat/data/kual-launch.log`  
+   (missing libraries, GTK errors, and crashes that print to stderr/stdout end up there). USB‑connect the Kindle and open that file on a PC, or `cat` it over SSH.
+
+2. **SSH / KTerm:** run the binary directly so errors stay on the terminal:
+   ```sh
+   /mnt/us/extensions/kindle_llm_chat/bin/kindle-llm-chat
+   ```
+   If it exits immediately, note the message (often a missing `.so` or display issue).
+
+3. **System log (varies by firmware):** `dmesg` after a failed launch, or search under `/var/log/` for lines mentioning the binary name, if your jailbreak docs point to a specific log.
 
 ## Notes
 

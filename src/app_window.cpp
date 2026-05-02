@@ -305,7 +305,7 @@ void AppWindow::build_ui() {
 
   GtkWidget *model_row = gtk_hbox_new(FALSE, 4);
   gtk_box_pack_start(GTK_BOX(model_row), gtk_label_new("Model"), FALSE, FALSE, 0);
-  model_combo_ = gtk_combo_box_text_new();
+  model_combo_ = gtk_combo_box_new_text();
   gtk_box_pack_start(GTK_BOX(model_row), model_combo_, TRUE, TRUE, 0);
   gtk_box_pack_start(GTK_BOX(right), model_row, FALSE, FALSE, 0);
   {
@@ -313,7 +313,7 @@ void AppWindow::build_ui() {
     if (fallback.empty()) {
       fallback = "local-model";
     }
-    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(model_combo_), fallback.c_str());
+    gtk_combo_box_append_text(GTK_COMBO_BOX(model_combo_), fallback.c_str());
     available_models_.push_back(fallback);
     gtk_combo_box_set_active(GTK_COMBO_BOX(model_combo_), 0);
   }
@@ -623,7 +623,7 @@ void AppWindow::on_show_settings() {
 
   AppConfig cfg = config_store_.config();
   GtkWidget *url_entry = gtk_entry_new();
-  GtkWidget *model_combo = gtk_combo_box_text_new();
+  GtkWidget *model_combo = gtk_combo_box_new_text();
   GtkWidget *key_entry = gtk_entry_new();
   GtkWidget *backend_entry = gtk_entry_new();
   GtkWidget *ctx_entry = gtk_entry_new();
@@ -641,7 +641,7 @@ void AppWindow::on_show_settings() {
       server_models.push_back(fallback);
     }
     for (const auto &name : server_models) {
-      gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(model_combo), name.c_str());
+      gtk_combo_box_append_text(GTK_COMBO_BOX(model_combo), name.c_str());
     }
     gint active = 0;
     bool found = false;
@@ -653,7 +653,7 @@ void AppWindow::on_show_settings() {
       }
     }
     if (!found && !cfg.model.empty()) {
-      gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(model_combo), cfg.model.c_str());
+      gtk_combo_box_append_text(GTK_COMBO_BOX(model_combo), cfg.model.c_str());
       active = static_cast<gint>(server_models.size());
     }
     gtk_combo_box_set_active(GTK_COMBO_BOX(model_combo), active);
@@ -679,7 +679,7 @@ void AppWindow::on_show_settings() {
   if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_OK) {
     AppConfig &mutable_cfg = config_store_.mutable_config();
     mutable_cfg.base_url = gtk_entry_get_text(GTK_ENTRY(url_entry));
-    gchar *model_text = gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(model_combo));
+    gchar *model_text = gtk_combo_box_get_active_text(GTK_COMBO_BOX(model_combo));
     mutable_cfg.model = model_text ? model_text : cfg.model;
     if (model_text) {
       g_free(model_text);
@@ -893,7 +893,7 @@ void AppWindow::on_model_changed() {
   if (model_combo_signal_blocked_ || active_chat_id_.empty()) {
     return;
   }
-  gchar *model = gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(model_combo_));
+  gchar *model = gtk_combo_box_get_active_text(GTK_COMBO_BOX(model_combo_));
   if (!model) {
     return;
   }
@@ -929,12 +929,12 @@ void AppWindow::refresh_models() {
   if (combo_model) {
     gint rows = gtk_tree_model_iter_n_children(combo_model, nullptr);
     while (rows > 0) {
-      gtk_combo_box_text_remove(GTK_COMBO_BOX_TEXT(model_combo_), 0);
+      gtk_combo_box_remove_text(GTK_COMBO_BOX(model_combo_), 0);
       rows = gtk_tree_model_iter_n_children(combo_model, nullptr);
     }
   }
   for (const auto &model_name : available_models_) {
-    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(model_combo_), model_name.c_str());
+    gtk_combo_box_append_text(GTK_COMBO_BOX(model_combo_), model_name.c_str());
   }
   if (!available_models_.empty()) {
     gtk_combo_box_set_active(GTK_COMBO_BOX(model_combo_), 0);
@@ -960,7 +960,7 @@ void AppWindow::sync_model_combo_with_active_chat() {
     }
   }
   if (!found) {
-    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(model_combo_), wanted.c_str());
+    gtk_combo_box_append_text(GTK_COMBO_BOX(model_combo_), wanted.c_str());
     available_models_.push_back(wanted);
     model_combo_signal_blocked_ = true;
     gtk_combo_box_set_active(GTK_COMBO_BOX(model_combo_), static_cast<gint>(available_models_.size() - 1));

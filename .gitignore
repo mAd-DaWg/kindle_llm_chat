@@ -45,6 +45,7 @@ Build/
 build-*/
 builddir/
 third_party/
+dist/
 
 # CMake generated files
 CMakeFiles/

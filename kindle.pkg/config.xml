@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<extension>
+  <information>
+    <name>Kindle LLM Chat</name>
+    <version>0.1.0</version>
+    <author>kindle_llm_chat</author>
+    <id>kindle_llm_chat</id>
+  </information>
+  <menus>
+    <menu type="json" dynamic="true">menu.json</menu>
+  </menus>
+</extension>
