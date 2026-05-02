@@ -1,10 +1,12 @@
 #include "app_window.h"
 #include "markdown_view.h"
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <ctime>
 #include <memory>
 #include <sstream>
+#include <vector>
 
 namespace {
 struct UiTextEvent {
@@ -38,6 +40,97 @@ gboolean idle_stream_terminal(gpointer data) {
 }
 
 constexpr const char *kBubbleTextViewKey = "kllc-bubble-tv";
+constexpr gint kBubbleCornerRadiusPx = 12;
+
+/** Filled rounded-rectangle region in widget-local coordinates (GTK+2 has no border-radius). */
+GdkRegion *bubble_rounded_rect_region(gint W, gint H, gint corner_radius) {
+  if (W < 2 || H < 2) {
+    GdkRectangle r = {0, 0, W, H};
+    return gdk_region_rectangle(&r);
+  }
+  const gint rad = std::min(corner_radius, std::min(W / 2, H / 2));
+  if (rad <= 0) {
+    GdkRectangle r = {0, 0, W, H};
+    return gdk_region_rectangle(&r);
+  }
+  const int segs = 6;
+  std::vector<GdkPoint> pts;
+  pts.reserve(size_t(4 * (segs + 2) + 8));
+  const double rd = static_cast<double>(rad);
+
+  auto arc_pts = [&](double cx, double cy, double a0, double a1) {
+    for (int i = 0; i <= segs; ++i) {
+      const double t = static_cast<double>(i) / static_cast<double>(segs);
+      const double ang = a0 + t * (a1 - a0);
+      GdkPoint p;
+      p.x = static_cast<gint>(std::lround(cx + rd * std::cos(ang)));
+      p.y = static_cast<gint>(std::lround(cy + rd * std::sin(ang)));
+      pts.push_back(p);
+    }
+  };
+
+  /* Clockwise perimeter: top edge, TR arc, right, BR, bottom, BL, left, TL arc (closes at (rad,0)). */
+  pts.push_back({rad, 0});
+  pts.push_back({W - rad, 0});
+  arc_pts(static_cast<double>(W - rad), static_cast<double>(rad), -M_PI / 2, 0);
+  pts.push_back({W, rad});
+  pts.push_back({W, H - rad});
+  arc_pts(static_cast<double>(W - rad), static_cast<double>(H - rad), 0, M_PI / 2);
+  pts.push_back({W - rad, H});
+  pts.push_back({rad, H});
+  arc_pts(static_cast<double>(rad), static_cast<double>(H - rad), M_PI / 2, M_PI);
+  pts.push_back({0, H - rad});
+  pts.push_back({0, rad});
+  arc_pts(static_cast<double>(rad), static_cast<double>(rad), M_PI, 3 * M_PI / 2);
+
+  return gdk_region_polygon(pts.data(), static_cast<int>(pts.size()), GDK_WINDING_RULE);
+}
+
+void bubble_apply_rounded_shape(GtkWidget *eb, GtkWidget *tv) {
+  if (!GTK_WIDGET_REALIZED(eb) || !GTK_WIDGET_REALIZED(tv)) {
+    return;
+  }
+  GtkAllocation a;
+  gtk_widget_get_allocation(eb, &a);
+  if (a.width < 4 || a.height < 4) {
+    return;
+  }
+  GdkRegion *bubble_rgn = bubble_rounded_rect_region(a.width, a.height, kBubbleCornerRadiusPx);
+
+  GdkWindow *eb_win = gtk_widget_get_window(eb);
+  if (eb_win) {
+    gdk_window_shape_combine_region(eb_win, bubble_rgn, 0, 0);
+  }
+
+  /* GtkTextView paints in subwindows; parent shape does not clip children on X, so shape each window. */
+  const GtkTextWindowType win_types[] = {GTK_TEXT_WINDOW_WIDGET, GTK_TEXT_WINDOW_TEXT, GTK_TEXT_WINDOW_LEFT,
+                                         GTK_TEXT_WINDOW_RIGHT, GTK_TEXT_WINDOW_TOP, GTK_TEXT_WINDOW_BOTTOM};
+  for (GtkTextWindowType wt : win_types) {
+    GdkWindow *win = gtk_text_view_get_window(GTK_TEXT_VIEW(tv), wt);
+    if (!win) {
+      continue;
+    }
+    gint tx = 0, ty = 0, tw = 0, th = 0;
+    gdk_window_get_geometry(win, &tx, &ty, &tw, &th, nullptr);
+    if (tw < 1 || th < 1) {
+      continue;
+    }
+    GdkRectangle tr = {tx, ty, tw, th};
+    GdkRegion *trgn = gdk_region_rectangle(&tr);
+    GdkRegion *local = gdk_region_copy(bubble_rgn);
+    gdk_region_intersect(local, trgn);
+    gdk_region_offset(local, -tx, -ty);
+    gdk_window_shape_combine_region(win, local, 0, 0);
+    gdk_region_destroy(local);
+    gdk_region_destroy(trgn);
+  }
+
+  gdk_region_destroy(bubble_rgn);
+}
+
+void on_bubble_eb_size_allocate(GtkWidget *eb, GtkAllocation * /*alloc*/, gpointer tv) {
+  bubble_apply_rounded_shape(eb, GTK_WIDGET(tv));
+}
 
 gint bubble_width_from_scroll_width(gint scroll_w) {
   gint w = static_cast<gint>(scroll_w * 0.72);
@@ -271,6 +364,7 @@ GtkTextBuffer *AppWindow::add_chat_bubble(const std::string &role, const std::st
   gtk_widget_modify_base(tv, GTK_STATE_NORMAL, &tv_base);
 
   gtk_container_add(GTK_CONTAINER(eb), tv);
+  g_signal_connect_after(eb, "size-allocate", G_CALLBACK(on_bubble_eb_size_allocate), tv);
 
   GtkWidget *sp_l = gtk_alignment_new(0, 0, 1, 1);
   GtkWidget *sp_r = gtk_alignment_new(0, 0, 1, 1);
