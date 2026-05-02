@@ -36,6 +36,17 @@ gboolean idle_stream_terminal(gpointer data) {
   delete d;
   return FALSE;
 }
+
+constexpr const char *kBubbleTextViewKey = "kllc-bubble-tv";
+
+gint bubble_width_from_scroll_width(gint scroll_w) {
+  gint w = static_cast<gint>(scroll_w * 0.72);
+  if (w < 120) {
+    w = 120;
+  }
+  return w;
+}
+
 } // namespace
 
 AppWindow::AppWindow(ChatStore &chat_store, ConfigStore &config_store)
@@ -143,13 +154,13 @@ void AppWindow::build_ui() {
 
   chat_scroll_ = gtk_scrolled_window_new(nullptr, nullptr);
   gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(chat_scroll_), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
-  chat_text_view_ = gtk_text_view_new();
-  gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(chat_text_view_), GTK_WRAP_WORD_CHAR);
-  gtk_text_view_set_editable(GTK_TEXT_VIEW(chat_text_view_), FALSE);
-  gtk_container_add(GTK_CONTAINER(chat_scroll_), chat_text_view_);
+  chat_messages_box_ = gtk_vbox_new(FALSE, 8);
+  GdkColor chat_bg;
+  gdk_color_parse("#ECE5DD", &chat_bg);
+  gtk_widget_modify_bg(chat_messages_box_, GTK_STATE_NORMAL, &chat_bg);
+  gtk_scrolled_window_add_with_viewport(GTK_SCROLLED_WINDOW(chat_scroll_), chat_messages_box_);
+  g_signal_connect(chat_scroll_, "size-allocate", G_CALLBACK(AppWindow::on_chat_scroll_allocate), this);
   gtk_box_pack_start(GTK_BOX(right), chat_scroll_, TRUE, TRUE, 0);
-  chat_buffer_ = gtk_text_view_get_buffer(GTK_TEXT_VIEW(chat_text_view_));
-  markdown_ensure_tags(chat_buffer_);
 
   usage_label_ = gtk_label_new("Context usage: 0.0%");
   gtk_box_pack_start(GTK_BOX(right), usage_label_, FALSE, FALSE, 0);
@@ -209,56 +220,136 @@ void AppWindow::reload_sidebar() {
   }
 }
 
-void AppWindow::append_line(const std::string &role, const std::string &content) {
-  markdown_ensure_tags(chat_buffer_);
-  GtkTextIter end;
-  gtk_text_buffer_get_end_iter(chat_buffer_, &end);
-  const std::string prefix = role + ": ";
-  gtk_text_buffer_insert_with_tags_by_name(chat_buffer_, &end, prefix.c_str(), -1, "md_role", nullptr);
-  if (role == "error") {
-    gtk_text_buffer_insert(chat_buffer_, &end, content.c_str(), -1);
-  } else {
-    markdown_insert(chat_buffer_, &end, content);
+void AppWindow::clear_messages_list() {
+  stream_reply_buffer_ = nullptr;
+  if (!chat_messages_box_) {
+    return;
   }
-  gtk_text_buffer_insert(chat_buffer_, &end, "\n\n", -1);
+  GList *ch = gtk_container_get_children(GTK_CONTAINER(chat_messages_box_));
+  for (GList *it = ch; it; it = it->next) {
+    gtk_widget_destroy(GTK_WIDGET(it->data));
+  }
+  g_list_free(ch);
+}
+
+gint AppWindow::bubble_width_for_layout() const {
+  if (!chat_scroll_ || !GTK_WIDGET_REALIZED(chat_scroll_)) {
+    return 360;
+  }
+  GtkAllocation a;
+  gtk_widget_get_allocation(chat_scroll_, &a);
+  return bubble_width_from_scroll_width(a.width);
+}
+
+GtkTextBuffer *AppWindow::add_chat_bubble(const std::string &role, const std::string &text, bool is_error) {
+  const bool user = (role == "user");
+
+  GtkWidget *row = gtk_hbox_new(FALSE, 6);
+  GtkWidget *eb = gtk_event_box_new();
+  GtkWidget *tv = gtk_text_view_new();
+  gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(tv), GTK_WRAP_WORD_CHAR);
+  gtk_text_view_set_editable(GTK_TEXT_VIEW(tv), FALSE);
+  gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(tv), FALSE);
+  gtk_text_view_set_left_margin(GTK_TEXT_VIEW(tv), 8);
+  gtk_text_view_set_right_margin(GTK_TEXT_VIEW(tv), 8);
+  gtk_text_view_set_pixels_above_lines(GTK_TEXT_VIEW(tv), 2);
+  gtk_text_view_set_pixels_below_lines(GTK_TEXT_VIEW(tv), 2);
+
+  GdkColor eb_bg;
+  GdkColor tv_base;
+  if (is_error) {
+    gdk_color_parse("#FFCDD2", &eb_bg);
+    gdk_color_parse("#FFEBEE", &tv_base);
+  } else if (user) {
+    gdk_color_parse("#DCF8C6", &eb_bg);
+    gdk_color_parse("#DCF8C6", &tv_base);
+  } else {
+    gdk_color_parse("#FFFFFF", &eb_bg);
+    gdk_color_parse("#FFFFFF", &tv_base);
+  }
+  gtk_widget_modify_bg(eb, GTK_STATE_NORMAL, &eb_bg);
+  gtk_widget_modify_base(tv, GTK_STATE_NORMAL, &tv_base);
+
+  gtk_container_add(GTK_CONTAINER(eb), tv);
+
+  GtkWidget *sp_l = gtk_alignment_new(0, 0, 1, 1);
+  GtkWidget *sp_r = gtk_alignment_new(0, 0, 1, 1);
+  if (user) {
+    gtk_box_pack_start(GTK_BOX(row), sp_l, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(row), eb, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(row), sp_r, FALSE, FALSE, 0);
+  } else if (is_error) {
+    gtk_box_pack_start(GTK_BOX(row), sp_l, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(row), eb, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(row), sp_r, TRUE, TRUE, 0);
+  } else {
+    gtk_box_pack_start(GTK_BOX(row), sp_l, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(row), eb, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(row), sp_r, TRUE, TRUE, 0);
+  }
+
+  gtk_widget_set_size_request(tv, bubble_width_for_layout(), -1);
+  g_object_set_data(G_OBJECT(row), kBubbleTextViewKey, tv);
+
+  gtk_box_pack_start(GTK_BOX(chat_messages_box_), row, FALSE, FALSE, 0);
+  gtk_widget_show_all(row);
+
+  GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tv));
+  markdown_ensure_tags(buf);
+  if (is_error) {
+    GtkTextIter pos;
+    gtk_text_buffer_get_start_iter(buf, &pos);
+    gtk_text_buffer_insert(buf, &pos, text.c_str(), -1);
+  } else if (!text.empty()) {
+    GtkTextIter end;
+    gtk_text_buffer_get_end_iter(buf, &end);
+    markdown_insert(buf, &end, text);
+  }
+  return buf;
+}
+
+void AppWindow::append_line(const std::string &role, const std::string &content) {
+  add_chat_bubble(role, content, role == "error");
 }
 
 void AppWindow::begin_assistant_stream() {
-  gtk_text_buffer_delete_mark_by_name(chat_buffer_, "assistant_body_start");
-  GtkTextIter end;
-  gtk_text_buffer_get_end_iter(chat_buffer_, &end);
-  gtk_text_buffer_insert(chat_buffer_, &end, "assistant: ", -1);
-  gtk_text_buffer_create_mark(chat_buffer_, "assistant_body_start", &end, TRUE);
+  stream_reply_buffer_ = add_chat_bubble("assistant", "", false);
+  gtk_text_buffer_delete_mark_by_name(stream_reply_buffer_, "assistant_body_start");
+  GtkTextIter it;
+  gtk_text_buffer_get_start_iter(stream_reply_buffer_, &it);
+  gtk_text_buffer_create_mark(stream_reply_buffer_, "assistant_body_start", &it, TRUE);
 }
 
 void AppWindow::append_assistant_token(const std::string &token) {
+  if (!stream_reply_buffer_) {
+    return;
+  }
   GtkTextIter end;
-  gtk_text_buffer_get_end_iter(chat_buffer_, &end);
-  gtk_text_buffer_insert(chat_buffer_, &end, token.c_str(), -1);
+  gtk_text_buffer_get_end_iter(stream_reply_buffer_, &end);
+  gtk_text_buffer_insert(stream_reply_buffer_, &end, token.c_str(), -1);
 }
 
-void AppWindow::end_assistant_stream() {
-  GtkTextIter end;
-  gtk_text_buffer_get_end_iter(chat_buffer_, &end);
-  gtk_text_buffer_insert(chat_buffer_, &end, "\n\n", -1);
-}
+void AppWindow::end_assistant_stream() {}
 
 void AppWindow::finish_assistant_markdown(const std::string &full_text) {
-  GtkTextMark *m = gtk_text_buffer_get_mark(chat_buffer_, "assistant_body_start");
+  GtkTextBuffer *buf = stream_reply_buffer_;
+  if (!buf) {
+    return;
+  }
+  GtkTextMark *m = gtk_text_buffer_get_mark(buf, "assistant_body_start");
   if (!m) {
+    stream_reply_buffer_ = nullptr;
     return;
   }
   GtkTextIter ins;
   GtkTextIter end;
-  gtk_text_buffer_get_iter_at_mark(chat_buffer_, &ins, m);
-  gtk_text_buffer_get_end_iter(chat_buffer_, &end);
-  gtk_text_buffer_delete(chat_buffer_, &ins, &end);
-  gtk_text_buffer_get_iter_at_mark(chat_buffer_, &ins, m);
-  markdown_insert(chat_buffer_, &ins, full_text);
-  gtk_text_buffer_delete_mark_by_name(chat_buffer_, "assistant_body_start");
-  GtkTextIter tail;
-  gtk_text_buffer_get_end_iter(chat_buffer_, &tail);
-  gtk_text_buffer_insert(chat_buffer_, &tail, "\n\n", -1);
+  gtk_text_buffer_get_iter_at_mark(buf, &ins, m);
+  gtk_text_buffer_get_end_iter(buf, &end);
+  gtk_text_buffer_delete(buf, &ins, &end);
+  gtk_text_buffer_get_iter_at_mark(buf, &ins, m);
+  markdown_insert(buf, &ins, full_text);
+  gtk_text_buffer_delete_mark_by_name(buf, "assistant_body_start");
+  stream_reply_buffer_ = nullptr;
 }
 
 void AppWindow::refresh_usage_label(const ChatUsage &usage) {
@@ -326,7 +417,7 @@ void AppWindow::maybe_bootstrap_chat() {
 void AppWindow::load_chat_into_view(const std::string &chat_id) {
   stream_ui_began_ = false;
   active_chat_id_ = chat_id;
-  gtk_text_buffer_set_text(chat_buffer_, "", -1);
+  clear_messages_list();
   const ChatThread *thread = chat_store_.find(chat_id);
   if (!thread) {
     sync_streaming_controls();
@@ -751,4 +842,23 @@ void AppWindow::on_model_combo_changed(GtkComboBox *, gpointer data) {
 }
 void AppWindow::on_chat_selection_changed(GtkTreeSelection *, gpointer data) {
   static_cast<AppWindow *>(data)->on_select_chat();
+}
+
+void AppWindow::on_chat_scroll_allocate(GtkWidget *widget, GdkRectangle *allocation, gpointer data) {
+  auto *self = static_cast<AppWindow *>(data);
+  if (!self || !self->chat_messages_box_) {
+    return;
+  }
+  const gint w = bubble_width_from_scroll_width(allocation->width);
+  GtkContainer *box = GTK_CONTAINER(self->chat_messages_box_);
+  GList *ch = gtk_container_get_children(box);
+  for (GList *it = ch; it; it = it->next) {
+    GtkWidget *row = GTK_WIDGET(it->data);
+    GtkWidget *tv = GTK_WIDGET(g_object_get_data(G_OBJECT(row), kBubbleTextViewKey));
+    if (tv) {
+      gtk_widget_set_size_request(tv, w, -1);
+    }
+  }
+  g_list_free(ch);
+  (void)widget;
 }

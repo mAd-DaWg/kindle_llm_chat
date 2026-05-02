@@ -37,8 +37,10 @@ private:
 
   GtkWidget *window_ = nullptr;
   GtkWidget *chat_scroll_ = nullptr;
-  GtkWidget *chat_text_view_ = nullptr;
-  GtkTextBuffer *chat_buffer_ = nullptr;
+  /** Vertical list of message rows (bubbles); each row owns its GtkTextView buffer. */
+  GtkWidget *chat_messages_box_ = nullptr;
+  /** Buffer of the assistant row created for the active stream; null when not streaming. */
+  GtkTextBuffer *stream_reply_buffer_ = nullptr;
   GtkWidget *message_entry_ = nullptr;
   GtkWidget *usage_label_ = nullptr;
   GtkWidget *send_button_ = nullptr;
@@ -56,7 +58,7 @@ private:
   std::atomic<uint64_t> next_stream_gen_{0};
   std::unordered_map<uint64_t, std::pair<std::string, std::shared_ptr<std::string>>> active_streams_;
   bool stream_ui_began_ = false;
-  /** Stream epoch for which the in-view "assistant:" block was opened (tokens + end must match). */
+  /** Stream epoch for which the in-view assistant bubble was opened (tokens + end must match). */
   uint64_t assistant_ui_epoch_ = 0;
 
   void build_ui();
@@ -65,7 +67,11 @@ private:
   void unregister_stream_gen(uint64_t gen);
   bool stream_gen_is_active(uint64_t gen) const;
   void scroll_chat_to_bottom();
-  /** Replace streamed assistant plain text with rendered markdown; appends closing newlines. */
+  void clear_messages_list();
+  gint bubble_width_for_layout() const;
+  /** Adds a messenger-style row; returns the message GtkTextBuffer (empty `text` still creates a bubble). */
+  GtkTextBuffer *add_chat_bubble(const std::string &role, const std::string &text, bool is_error);
+  /** Replace streamed assistant plain text with rendered markdown. */
   void finish_assistant_markdown(const std::string &full_text);
   void refresh_usage_estimate_for_stream(const std::string &chat_id,
                                          const std::shared_ptr<std::string> &assistant_so_far);
@@ -100,4 +106,5 @@ private:
   static void on_close_clicked(GtkWidget *, gpointer data);
   static void on_model_combo_changed(GtkComboBox *, gpointer data);
   static void on_chat_selection_changed(GtkTreeSelection *, gpointer data);
+  static void on_chat_scroll_allocate(GtkWidget *widget, GdkRectangle *allocation, gpointer data);
 };
