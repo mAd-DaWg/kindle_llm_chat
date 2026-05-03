@@ -1,4 +1,4 @@
-# Kindle LLM Chat
+# Kindle LLM Chat ( has an issue with button presses on kindle)
 
 Native Kindle GTK+ 2.0 chat client in C++ (Meson) for jailbroken devices.
 
